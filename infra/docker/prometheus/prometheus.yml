@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: idp-api
+    static_configs:
+      - targets: ["idp-api:8000"]
+
+  - job_name: idp-worker
+    static_configs:
+      - targets: ["idp-worker:8001"]

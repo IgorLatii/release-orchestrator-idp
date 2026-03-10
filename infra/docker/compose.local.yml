@@ -1,0 +1,97 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: idp-postgres
+    environment:
+      POSTGRES_DB: idp
+      POSTGRES_USER: idp_user
+      POSTGRES_PASSWORD: idp_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U idp_user -d idp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: idp-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: idp
+      RABBITMQ_DEFAULT_PASS: idp_pass
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  idp-api:
+    build:
+      context: ../../services/idp-api
+    container_name: idp-api
+    env_file:
+      - .env.local
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ../../services/idp-api:/app
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+  idp-worker:
+    build:
+      context: ../../services/idp-worker
+    container_name: idp-worker
+    env_file:
+      - .env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ../../services/idp-worker:/app
+    command: python -m src.main
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: idp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - idp-api
+      - idp-worker
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: idp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  grafana_data:
