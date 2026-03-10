@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+echo "Bootstrap server for Release Orchestrator IDP"
 set -Eeuo pipefail
 
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
