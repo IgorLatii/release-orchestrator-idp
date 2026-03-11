@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -29,5 +30,4 @@ class ReleaseResponse(BaseModel):
     finished_at: datetime | None = None
     error_message: str | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

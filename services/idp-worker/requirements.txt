@@ -1,1 +1,5 @@
+pika
+sqlalchemy
+psycopg2-binary
+pydantic-settings
 prometheus-client

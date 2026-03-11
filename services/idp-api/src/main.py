@@ -23,7 +23,10 @@ def health():
 
 @app.get("/metrics")
 def metrics():
-    return PlainTextResponse(generate_latest().decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
+    return PlainTextResponse(
+        generate_latest().decode("utf-8"),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 
 app.include_router(releases_router)
