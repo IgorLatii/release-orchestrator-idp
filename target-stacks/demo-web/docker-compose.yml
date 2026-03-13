@@ -1,0 +1,6 @@
+services:
+  demo-web:
+    image: nginx:alpine
+    ports:
+      - "8088:80"
+    restart: unless-stopped
