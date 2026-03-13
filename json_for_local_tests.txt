@@ -1,0 +1,10 @@
+{
+  "service": "demo-web",
+  "version": "v1.0.0",
+  "environment": "dev",
+  "target": {
+    "repo": "local-target-stack",
+    "ref": "main",
+    "composePath": "docker-compose.yml"
+  }
+}

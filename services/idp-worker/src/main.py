@@ -10,6 +10,8 @@ from src.config import settings
 from src.db import SessionLocal
 from src.models import Release, ReleaseStep
 
+from prometheus_client import Counter, Histogram, start_http_server
+
 import uuid
 
 import os
@@ -21,6 +23,36 @@ QUEUE_NAME = "release_requested"
 worker_heartbeat = Counter("idp_worker_heartbeat_total", "Worker heartbeat counter")
 worker_processed = Counter("idp_worker_processed_total", "Processed release events")
 worker_failed = Counter("idp_worker_failed_total", "Failed release events")
+
+release_success_total = Counter(
+    "idp_release_success_total",
+    "Total successful releases",
+    ["service", "environment"],
+)
+
+release_failed_total = Counter(
+    "idp_release_failed_total",
+    "Total failed releases",
+    ["service", "environment"],
+)
+
+release_step_success_total = Counter(
+    "idp_release_step_success_total",
+    "Total successful release steps",
+    ["service", "environment", "step_name"],
+)
+
+release_step_failed_total = Counter(
+    "idp_release_step_failed_total",
+    "Total failed release steps",
+    ["service", "environment", "step_name"],
+)
+
+release_step_duration_seconds = Histogram(
+    "idp_release_step_duration_seconds",
+    "Duration of release steps in seconds",
+    ["service", "environment", "step_name"],
+)
 
 
 def log_step(release_id: str, step: str, message: str) -> None:
@@ -80,24 +112,55 @@ def run_validate(db: Session, release: Release) -> None:
     mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
-    if not release.service:
-        raise RuntimeError("Release service is empty")
-    if not release.version:
-        raise RuntimeError("Release version is empty")
-    if not release.environment:
-        raise RuntimeError("Release environment is empty")
-    if not release.target_repo:
-        raise RuntimeError("Release target_repo is empty")
-    if not release.target_ref:
-        raise RuntimeError("Release target_ref is empty")
-    if not release.target_compose_path:
-        raise RuntimeError("Release target_compose_path is empty")
+    started = time.perf_counter()
+    try:
+        if not release.service:
+            raise RuntimeError("Release service is empty")
+        if not release.version:
+            raise RuntimeError("Release version is empty")
+        if not release.environment:
+            raise RuntimeError("Release environment is empty")
+        if not release.target_repo:
+            raise RuntimeError("Release target_repo is empty")
+        if not release.target_ref:
+            raise RuntimeError("Release target_ref is empty")
+        if not release.target_compose_path:
+            raise RuntimeError("Release target_compose_path is empty")
 
-    if release.environment not in ("dev", "stage", "prod"):
-        raise RuntimeError(f"Unsupported environment: {release.environment}")
+        if release.environment not in ("dev", "stage", "prod"):
+            raise RuntimeError(f"Unsupported environment: {release.environment}")
 
-    mark_step_success(db, release.id, step, step_order)
-    log_step(release.id, step, "finished successfully")
+        mark_step_success(db, release.id, step, step_order)
+
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_success_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        log_step(release.id, step, "finished successfully")
+    except Exception:
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_failed_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        raise
 
 
 def run_deploy(db: Session, release: Release) -> None:
@@ -107,49 +170,80 @@ def run_deploy(db: Session, release: Release) -> None:
     mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
-    target_root = Path("/opt/release-targets")
-    target_dir = target_root / release.service
+    started = time.perf_counter()
+    try:
+        target_root = Path("/opt/release-targets")
+        target_dir = target_root / release.service
 
-    if not target_dir.exists():
-        raise RuntimeError(f"Target stack directory does not exist: {target_dir}")
+        if not target_dir.exists():
+            raise RuntimeError(f"Target stack directory does not exist: {target_dir}")
 
-    compose_file = target_dir / release.target_compose_path
-    if not compose_file.exists():
-        raise RuntimeError(f"Compose file does not exist: {compose_file}")
+        compose_file = target_dir / release.target_compose_path
+        if not compose_file.exists():
+            raise RuntimeError(f"Compose file does not exist: {compose_file}")
 
-    project_name = f"{release.service}-{release.environment}"
+        project_name = f"{release.service}-{release.environment}"
 
-    cmd = [
-        "docker",
-        "compose",
-        "-p",
-        project_name,
-        "-f",
-        str(compose_file),
-        "up",
-        "-d",
-    ]
+        cmd = [
+            "docker",
+            "compose",
+            "-p",
+            project_name,
+            "-f",
+            str(compose_file),
+            "up",
+            "-d",
+        ]
 
-    log_step(release.id, step, f"running command: {' '.join(cmd)}")
+        log_step(release.id, step, f"running command: {' '.join(cmd)}")
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
-    if result.stdout:
-        log_step(release.id, step, f"stdout: {result.stdout.strip()}")
+        if result.stdout:
+            log_step(release.id, step, f"stdout: {result.stdout.strip()}")
 
-    if result.stderr:
-        log_step(release.id, step, f"stderr: {result.stderr.strip()}")
+        if result.stderr:
+            log_step(release.id, step, f"stderr: {result.stderr.strip()}")
 
-    if result.returncode != 0:
-        raise RuntimeError(f"docker compose failed with exit code {result.returncode}")
+        if result.returncode != 0:
+            raise RuntimeError(f"docker compose failed with exit code {result.returncode}")
 
-    mark_step_success(db, release.id, step, step_order)
-    log_step(release.id, step, "finished successfully")
+        mark_step_success(db, release.id, step, step_order)
+
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_success_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        log_step(release.id, step, "finished successfully")
+    except Exception:
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_failed_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        raise
 
 
 def run_smoke_test(db: Session, release: Release) -> None:
@@ -159,18 +253,49 @@ def run_smoke_test(db: Session, release: Release) -> None:
     mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
-    if release.service == "demo-web":
-        import urllib.request
+    started = time.perf_counter()
+    try:
+        if release.service == "demo-web":
+            import urllib.request
 
-        url = "http://172.30.81.172:8088"
-        with urllib.request.urlopen(url, timeout=10) as response:
-            if response.status != 200:
-                raise RuntimeError(f"Smoke test failed, status={response.status}")
-    else:
-        time.sleep(1)
+            url = "http://172.30.81.172:8088"
+            with urllib.request.urlopen(url, timeout=10) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"Smoke test failed, status={response.status}")
+        else:
+            time.sleep(1)
 
-    mark_step_success(db, release.id, step, step_order)
-    log_step(release.id, step, "finished successfully")
+        mark_step_success(db, release.id, step, step_order)
+
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_success_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        log_step(release.id, step, "finished successfully")
+    except Exception:
+        duration = time.perf_counter() - started
+        release_step_duration_seconds.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).observe(duration)
+
+        release_step_failed_total.labels(
+            service=release.service,
+            environment=release.environment,
+            step_name=step,
+        ).inc()
+
+        raise
 
 
 def process_release_event(event: dict) -> None:
@@ -206,6 +331,11 @@ def process_release_event(event: dict) -> None:
         release.finished_at = datetime.now(timezone.utc)
         db.commit()
 
+        release_success_total.labels(
+            service=release.service,
+            environment=release.environment,
+        ).inc()
+
         log_step(release.id, "PIPELINE", "completed with SUCCESS")
         worker_processed.inc()
 
@@ -221,6 +351,12 @@ def process_release_event(event: dict) -> None:
             release.error_message = str(exc)
             release.finished_at = datetime.now(timezone.utc)
             db.commit()
+
+            if release:
+                release_failed_total.labels(
+                    service=release.service,
+                    environment=release.environment,
+                ).inc()
 
         log_step(release_id, "PIPELINE", f"failed: {exc}")
         raise
