@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from src.config import settings
 from src.db import SessionLocal
-from src.models import Release
+from src.models import Release, ReleaseStep
+
+import uuid
 
 import os
 import subprocess
@@ -24,9 +26,58 @@ worker_failed = Counter("idp_worker_failed_total", "Failed release events")
 def log_step(release_id: str, step: str, message: str) -> None:
     print(f"[worker] [{release_id}] [{step}] {message}")
 
+def get_or_create_step(db: Session, release_id: str, step_name: str, step_order: int) -> ReleaseStep:
+    step = (
+        db.query(ReleaseStep)
+        .filter(ReleaseStep.release_id == release_id, ReleaseStep.step_name == step_name)
+        .first()
+    )
+    if step:
+        return step
 
-def run_validate(release: Release) -> None:
+    step = ReleaseStep(
+        id=str(uuid.uuid4()),
+        release_id=release_id,
+        step_name=step_name,
+        status="PENDING",
+        step_order=step_order,
+    )
+    db.add(step)
+    db.commit()
+    db.refresh(step)
+    return step
+
+
+def mark_step_in_progress(db: Session, release_id: str, step_name: str, step_order: int) -> ReleaseStep:
+    step = get_or_create_step(db, release_id, step_name, step_order)
+    step.status = "IN_PROGRESS"
+    step.started_at = datetime.now(timezone.utc)
+    step.error_message = None
+    db.commit()
+    db.refresh(step)
+    return step
+
+
+def mark_step_success(db: Session, release_id: str, step_name: str, step_order: int) -> None:
+    step = get_or_create_step(db, release_id, step_name, step_order)
+    step.status = "SUCCESS"
+    step.finished_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def mark_step_failed(db: Session, release_id: str, step_name: str, step_order: int, error_message: str) -> None:
+    step = get_or_create_step(db, release_id, step_name, step_order)
+    step.status = "FAILED"
+    step.finished_at = datetime.now(timezone.utc)
+    step.error_message = error_message
+    db.commit()
+
+
+def run_validate(db: Session, release: Release) -> None:
     step = "VALIDATE"
+    step_order = 1
+
+    mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
     if not release.service:
@@ -45,11 +96,15 @@ def run_validate(release: Release) -> None:
     if release.environment not in ("dev", "stage", "prod"):
         raise RuntimeError(f"Unsupported environment: {release.environment}")
 
+    mark_step_success(db, release.id, step, step_order)
     log_step(release.id, step, "finished successfully")
 
 
-def run_deploy(release: Release) -> None:
+def run_deploy(db: Session, release: Release) -> None:
     step = "DEPLOY"
+    step_order = 2
+
+    mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
     target_root = Path("/opt/release-targets")
@@ -93,11 +148,15 @@ def run_deploy(release: Release) -> None:
     if result.returncode != 0:
         raise RuntimeError(f"docker compose failed with exit code {result.returncode}")
 
+    mark_step_success(db, release.id, step, step_order)
     log_step(release.id, step, "finished successfully")
 
 
-def run_smoke_test(release: Release) -> None:
+def run_smoke_test(db: Session, release: Release) -> None:
     step = "SMOKE_TEST"
+    step_order = 3
+
+    mark_step_in_progress(db, release.id, step, step_order)
     log_step(release.id, step, "started")
 
     if release.service == "demo-web":
@@ -107,10 +166,10 @@ def run_smoke_test(release: Release) -> None:
         with urllib.request.urlopen(url, timeout=10) as response:
             if response.status != 200:
                 raise RuntimeError(f"Smoke test failed, status={response.status}")
-
     else:
         time.sleep(1)
 
+    mark_step_success(db, release.id, step, step_order)
     log_step(release.id, step, "finished successfully")
 
 
@@ -118,6 +177,9 @@ def process_release_event(event: dict) -> None:
     release_id = event["release_id"]
 
     db: Session = SessionLocal()
+    current_step_name = None
+    current_step_order = None
+
     try:
         release = db.query(Release).filter(Release.id == release_id).first()
         if not release:
@@ -128,9 +190,17 @@ def process_release_event(event: dict) -> None:
         release.started_at = datetime.now(timezone.utc)
         db.commit()
 
-        run_validate(release)
-        run_deploy(release)
-        run_smoke_test(release)
+        current_step_name = "VALIDATE"
+        current_step_order = 1
+        run_validate(db, release)
+
+        current_step_name = "DEPLOY"
+        current_step_order = 2
+        run_deploy(db, release)
+
+        current_step_name = "SMOKE_TEST"
+        current_step_order = 3
+        run_smoke_test(db, release)
 
         release.status = "SUCCESS"
         release.finished_at = datetime.now(timezone.utc)
@@ -141,6 +211,9 @@ def process_release_event(event: dict) -> None:
 
     except Exception as exc:
         worker_failed.inc()
+
+        if current_step_name is not None and current_step_order is not None:
+            mark_step_failed(db, release_id, current_step_name, current_step_order, str(exc))
 
         release = db.query(Release).filter(Release.id == release_id).first()
         if release:

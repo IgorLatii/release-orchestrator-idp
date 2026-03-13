@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 
 from src.db import Base
 
@@ -23,4 +23,18 @@ class Release(Base):
     started_at = Column(DateTime(timezone=True), nullable=True)
     finished_at = Column(DateTime(timezone=True), nullable=True)
 
+    error_message = Column(Text, nullable=True)
+
+
+class ReleaseStep(Base):
+    __tablename__ = "release_steps"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    release_id = Column(String, ForeignKey("releases.id"), nullable=False)
+    step_name = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    step_order = Column(Integer, nullable=False)
+
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)

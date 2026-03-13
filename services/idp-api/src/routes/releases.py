@@ -6,6 +6,9 @@ from src.messaging import publish_release_requested
 from src.models import Release
 from src.schemas import ReleaseCreateRequest, ReleaseResponse
 
+from src.models import Release, ReleaseStep
+from src.schemas import ReleaseCreateRequest, ReleaseResponse, ReleaseStepResponse
+
 router = APIRouter(prefix="/releases", tags=["releases"])
 
 
@@ -52,3 +55,17 @@ def get_release(release_id: str, db: Session = Depends(get_db)):
     if not release:
         raise HTTPException(status_code=404, detail="Release not found")
     return release
+
+@router.get("/{release_id}/steps", response_model=list[ReleaseStepResponse])
+def get_release_steps(release_id: str, db: Session = Depends(get_db)):
+    release = db.query(Release).filter(Release.id == release_id).first()
+    if not release:
+        raise HTTPException(status_code=404, detail="Release not found")
+
+    steps = (
+        db.query(ReleaseStep)
+        .filter(ReleaseStep.release_id == release_id)
+        .order_by(ReleaseStep.step_order.asc())
+        .all()
+    )
+    return steps

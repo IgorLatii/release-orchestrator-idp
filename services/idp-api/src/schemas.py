@@ -31,3 +31,16 @@ class ReleaseResponse(BaseModel):
     error_message: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ReleaseStepResponse(BaseModel):
+    id: str
+    release_id: str
+    step_name: str
+    status: str
+    step_order: int
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_message: str | None = None
+
+    model_config = {"from_attributes": True}
