@@ -182,11 +182,50 @@ def run_deploy(db: Session, release: Release) -> None:
         if not compose_file.exists():
             raise RuntimeError(f"Compose file does not exist: {compose_file}")
 
+        env_file = target_dir / "envs" / f"{release.environment}.env"
+        if not env_file.exists():
+            raise RuntimeError(f"Env file does not exist: {env_file}")
+
         project_name = f"{release.service}-{release.environment}"
 
+        # 1. Check compose config
+        config_cmd = [
+            "docker",
+            "compose",
+            "--env-file",
+            str(env_file),
+            "-f",
+            str(compose_file),
+            "config",
+        ]
+
+        log_step(release.id, step, f"running config check: {' '.join(config_cmd)}")
+
+        config_result = subprocess.run(
+            config_cmd,
+            cwd=target_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if config_result.stdout:
+            log_step(release.id, step, f"config stdout: {config_result.stdout.strip()}")
+
+        if config_result.stderr:
+            log_step(release.id, step, f"config stderr: {config_result.stderr.strip()}")
+
+        if config_result.returncode != 0:
+            raise RuntimeError(
+                f"docker compose config failed with exit code {config_result.returncode}"
+            )
+
+        # 2. Deploy
         cmd = [
             "docker",
             "compose",
+            "--env-file",
+            str(env_file),
             "-p",
             project_name,
             "-f",
@@ -199,6 +238,7 @@ def run_deploy(db: Session, release: Release) -> None:
 
         result = subprocess.run(
             cmd,
+            cwd=target_dir,
             capture_output=True,
             text=True,
             check=False,
@@ -229,7 +269,8 @@ def run_deploy(db: Session, release: Release) -> None:
         ).inc()
 
         log_step(release.id, step, "finished successfully")
-    except Exception:
+
+    except Exception as e:
         duration = time.perf_counter() - started
         release_step_duration_seconds.labels(
             service=release.service,
@@ -243,8 +284,22 @@ def run_deploy(db: Session, release: Release) -> None:
             step_name=step,
         ).inc()
 
+        log_step(release.id, step, f"failed: {str(e)}")
         raise
 
+def load_env_file(env_path: Path) -> dict:
+    env_vars = {}
+
+    with env_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            env_vars[key.strip()] = value.strip()
+
+    return env_vars
 
 def run_smoke_test(db: Session, release: Release) -> None:
     step = "SMOKE_TEST"
@@ -262,6 +317,45 @@ def run_smoke_test(db: Session, release: Release) -> None:
             with urllib.request.urlopen(url, timeout=10) as response:
                 if response.status != 200:
                     raise RuntimeError(f"Smoke test failed, status={response.status}")
+
+        elif release.service == "frontier-consult":
+            import requests
+
+            target_root = Path("/opt/release-targets")
+            target_dir = target_root / release.service
+            env_file = target_dir / "envs" / f"{release.environment}.env"
+
+            if not env_file.exists():
+                raise RuntimeError(f"Env file not found for smoke test: {env_file}")
+
+            env_vars = load_env_file(env_file)
+
+            fastapi_port = env_vars.get("FASTAPI_PORT")
+            django_port = env_vars.get("DJANGO_PORT")
+
+            if not fastapi_port or not django_port:
+                raise RuntimeError("FASTAPI_PORT or DJANGO_PORT is missing in env file")
+
+            # Time to up for services
+            time.sleep(10)
+
+            fastapi_url = f"http://localhost:{fastapi_port}/docs"
+            django_url = f"http://localhost:{django_port}/admin/"
+
+            log_step(release.id, step, f"checking FastAPI: {fastapi_url}")
+            r1 = requests.get(fastapi_url, timeout=10)
+            if r1.status_code != 200:
+                raise RuntimeError(
+                    f"FastAPI smoke test failed: {fastapi_url} -> {r1.status_code}"
+                )
+
+            log_step(release.id, step, f"checking Django: {django_url}")
+            r2 = requests.get(django_url, timeout=10, allow_redirects=False)
+            if r2.status_code not in (200, 302):
+                raise RuntimeError(
+                    f"Django smoke test failed: {django_url} -> {r2.status_code}"
+                )
+
         else:
             time.sleep(1)
 
@@ -281,7 +375,8 @@ def run_smoke_test(db: Session, release: Release) -> None:
         ).inc()
 
         log_step(release.id, step, "finished successfully")
-    except Exception:
+
+    except Exception as e:
         duration = time.perf_counter() - started
         release_step_duration_seconds.labels(
             service=release.service,
@@ -295,6 +390,7 @@ def run_smoke_test(db: Session, release: Release) -> None:
             step_name=step,
         ).inc()
 
+        log_step(release.id, step, f"failed: {str(e)}")
         raise
 
 
