@@ -1,5 +1,5 @@
 param(
-    [string]$Server = "deploy@172.30.81.172"
+    [string]$Server = "deploy@172.17.123.85"
 )
 
 $ErrorActionPreference = "Stop"

@@ -6,17 +6,19 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
     volumes:
+      - ./initdb/Dump20250413:/docker-entrypoint-initdb.d
       - mysql_data:/var/lib/mysql
 
   fastapi:
     image: ghcr.io/igorlatii/fastapi-ai:latest
     restart: unless-stopped
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      db_host: mysql
+      db_port: ${DB_PORT}
+      db_name: ${MYSQL_DATABASE}
+      db_user: ${MYSQL_USER}
+      db_password: ${MYSQL_PASSWORD}
+      openai_api_key: ${OPENAI_API_KEY}
     depends_on:
       - mysql
     ports:
@@ -29,7 +31,10 @@ services:
       DB_HOST: mysql
       DB_NAME: ${MYSQL_DATABASE}
       DB_USER: ${MYSQL_USER}
-      DB_PASS: ${MYSQL_PASSWORD}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJ_HOST: ${DJ_HOST}
+      DB_PORT: ${DB_PORT}
     depends_on:
       - mysql
     ports:
