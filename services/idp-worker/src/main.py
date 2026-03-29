@@ -220,7 +220,41 @@ def run_deploy(db: Session, release: Release) -> None:
                 f"docker compose config failed with exit code {config_result.returncode}"
             )
 
-        # 2. Deploy
+        # 2. Pull step
+        pull_cmd = [
+            "docker",
+            "compose",
+            "--env-file",
+            str(env_file),
+            "-p",
+            project_name,
+            "-f",
+            str(compose_file),
+            "pull",
+        ]
+
+        log_step(release.id, step, f"running pull: {' '.join(pull_cmd)}")
+
+        pull_result = subprocess.run(
+            pull_cmd,
+            cwd=target_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if pull_result.stdout:
+            log_step(release.id, step, f"pull stdout: {pull_result.stdout.strip()}")
+
+        if pull_result.stderr:
+            log_step(release.id, step, f"pull stderr: {pull_result.stderr.strip()}")
+
+        if pull_result.returncode != 0:
+            raise RuntimeError(
+                f"docker compose pull failed with exit code {pull_result.returncode}"
+            )
+
+        # 3. Deploy
         cmd = [
             "docker",
             "compose",
