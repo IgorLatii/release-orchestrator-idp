@@ -10,7 +10,7 @@ services:
       - mysql_data:/var/lib/mysql
 
   fastapi:
-    image: ghcr.io/igorlatii/fastapi-ai:latest
+    image: ghcr.io/igorlatii/fastapi-ai:${FASTAPI_IMAGE_TAG}
     restart: unless-stopped
     environment:
       db_host: mysql
@@ -25,7 +25,7 @@ services:
       - "${FASTAPI_PORT}:8000"
 
   django:
-    image: ghcr.io/igorlatii/django-admin:latest
+    image: ghcr.io/igorlatii/django-admin:${DJANGO_IMAGE_TAG}
     restart: unless-stopped
     environment:
       DB_HOST: mysql
@@ -41,7 +41,7 @@ services:
       - "${DJANGO_PORT}:8001"
 
   bot:
-    image: ghcr.io/igorlatii/telegram-bot:latest
+    image: ghcr.io/igorlatii/telegram-bot:${BOT_IMAGE_TAG}
     restart: unless-stopped
     environment:
       BOT_NAME: ${BOT_NAME}
