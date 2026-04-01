@@ -9,6 +9,41 @@ services:
       - ./initdb/Dump20250413:/docker-entrypoint-initdb.d
       - mysql_data:/var/lib/mysql
 
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+
+  dasi:
+    image: ghcr.io/igorlatii/dasi:latest
+    restart: unless-stopped
+    environment:
+      SPRING_MONGODB_URI: mongodb://mongo:27017/dasi
+      SERVER_PORT: 8080
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      EXTERNAL_API_URL: http://fastapi:8000/ask
+      MAIL_HOST: ${MAIL_HOST}
+      MAIL_PORT: ${MAIL_PORT}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      APP_MAIL_FROM: ${APP_MAIL_FROM}
+      APP_MAIL_FROM_NAME: ${APP_MAIL_FROM_NAME}
+    depends_on:
+      - mongo
+      - fastapi
+    ports:
+      - "8082:8080"
+
+  bridge-console:
+    image: ghcr.io/igorlatii/bridge-console:latest
+    restart: unless-stopped
+    depends_on:
+      - dasi
+    ports:
+      - "3001:8080"
+
   fastapi:
     image: ghcr.io/igorlatii/fastapi-ai:${FASTAPI_IMAGE_TAG}
     restart: unless-stopped
@@ -56,3 +91,4 @@ services:
 
 volumes:
   mysql_data:
+  mongo_data:
