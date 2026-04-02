@@ -9,7 +9,73 @@ It separates responsibilities between API, messaging, processing, and deployment
 ---
 
 ## Components
-
+```
+Azure VM (Ubuntu)
+├─ IDP Stack
+│  ├─ API
+│  │  ├─ Tech: FastAPI
+│  │  ├─ Container port: 8000
+│  │  ├─ External: 8000
+│  │  └─ Role: receives POST /releases, reads/writes release state
+│  │
+│  ├─ Worker
+│  │  ├─ Tech: Python worker
+│  │  ├─ Container port: none (background service)
+│  │  └─ Role: reads events from RabbitMQ and performs deploy/smoke test
+│  │
+│  ├─ RabbitMQ
+│  │  ├─ Tech: RabbitMQ
+│  │  ├─ AMQP port: 5672
+│  │  ├─ Management UI: 15672
+│  │  └─ Role: broker beetween API and Worker
+│  │
+│  ├─ PostgreSQL
+│  │  ├─ Tech: PostgreSQL
+│  │  ├─ Port: 5432
+│  │  └─ Role: keeps releases and release_steps
+│  │
+│  ├─ Prometheus
+│  │  ├─ Tech: Prometheus
+│  │  ├─ Port: 9090
+│  │  └─ Role: collects metrics IDP
+│  │
+│  └─ Grafana
+│     ├─ Tech: Grafana
+│     ├─ Port: 3000
+│     └─ Role: visualizes metrics
+│
+└─ Target Stack
+   ├─ UI
+   │  ├─ Tech: TypeScript frontend
+   │  ├─ Port: 80 / 3000 / 5173 (depends on method of containerization)
+   │  └─ Role: web UI for work with sistem
+   │
+   ├─ dasi
+   │  ├─ Tech: Spring Boot
+   │  ├─ Port: 8080
+   │  └─ Role: main backend / business API
+   │
+   ├─ FastAPI
+   │  ├─ Tech: FastAPI
+   │  ├─ Port: 8001
+   │  └─ Role: additional Python API / AI / processing
+   │
+   ├─ Telegram Bot
+   │  ├─ Tech: Java / Spring Boot Telegram bot
+   │  ├─ Port: none (outbound only)
+   │  └─ Role: receives messages via Telegram platform API
+   │
+   ├─ MySQL
+   │  ├─ Tech: MySQL
+   │  ├─ Port: 3306
+   │  └─ Role: relational storage
+   │
+   └─ MongoDB
+      ├─ Tech: MongoDB
+      ├─ Port: 27017
+      └─ Role: document storage
+     
+```
 ### 1. Release API (FastAPI)
 
 - Entry point for release requests
