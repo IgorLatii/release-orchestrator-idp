@@ -145,6 +145,37 @@ Azure VM (Ubuntu)
 
 ---
 
+## General flow-scheme 
+```
+Developer
+   │
+   └── git push
+          │
+          v
+     GitHub Actions
+          │
+          ├── build image
+          ├── push image to GHCR
+          └── POST /releases → IDP API:8000
+                                  │
+                                  ├── save release → PostgreSQL:5432
+                                  └── publish event → RabbitMQ:5672
+                                                        │
+                                                        v
+                                                     Worker
+                                                        │
+                                                        ├── validate target
+                                                        ├── docker compose pull/up
+                                                        ├── smoke test
+                                                        └── update status → PostgreSQL:5432
+                                                                 |
+                                                                 v
+                                                         Target Stack updated
+```
+
+
+---
+
 ## Deployment Architecture (Runtime)
 
 All services run as Docker containers on a cloud VM.
